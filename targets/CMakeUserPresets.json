@@ -1,0 +1,28 @@
+{
+    "version": 4,
+    "vendor": {
+        "conan": {}
+    },
+    "include": [
+        "conan/CMakePresets.json"
+    ],
+    "configurePresets": [
+        {
+            "name": "conan-relwithdebinfo",
+            "inherits": "conan-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO": "Release",
+                "CMAKE_C_FLAGS_RELWITHDEBINFO": "-O0 -g -Xclang -gcodeview",
+                "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O0 -g -Xclang -gcodeview"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "conan-relwithdebinfo",
+            "configurePreset": "conan-relwithdebinfo",
+            "jobs": 16
+        }
+    ]
+}
