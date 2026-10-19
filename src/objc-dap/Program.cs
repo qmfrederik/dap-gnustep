@@ -8,7 +8,7 @@ namespace ObjcDap
         {
             Debugger.Launch();
 
-            var proxy = new DebugAdapterProxy(Console.OpenStandardInput(), Console.OpenStandardOutput());
+            var proxy = new ObjCDebugAdapter(Console.OpenStandardInput(), Console.OpenStandardOutput());
             proxy.Run();
             return Task.FromResult(0);
         }
