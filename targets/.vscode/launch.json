@@ -1,11 +1,17 @@
 {
     "configurations": [
         {
-            "name": "Launch",
+            "name": "Launch (objc-dap)",
             "type": "lldb-dap",
             "request": "launch",
             "program": "${workspaceFolder}/conan/target-NSString.exe",
             "debugAdapterExecutable": "${workspaceFolder}/../src/objc-dap/bin/Debug/net10.0/objc-dap.exe"
+        },
+        {
+            "name": "Launch (lldb)",
+            "type": "lldb-dap",
+            "request": "launch",
+            "program": "${workspaceFolder}/conan/target-NSString.exe"
         }
     ]
 }
