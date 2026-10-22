@@ -1,6 +1,8 @@
 [requires]
 libobjc2/[^2.2.1]
 gnustep-base/[^1.31.1]
+cppdap/cci.20230526
+nlohmann_json/3.11.2
 
 [generators]
 CMakeDeps

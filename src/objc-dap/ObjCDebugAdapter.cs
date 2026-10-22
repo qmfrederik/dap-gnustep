@@ -1,8 +1,10 @@
+using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace ObjcDap
 {
@@ -56,7 +58,7 @@ namespace ObjcDap
 
             await Task.WhenAll(variables
                 .Where(IsObjectiveCObject)
-                .Select(variable => this.DescribeClassAsync(variable, timeout.Token))).ConfigureAwait(false);
+                .Select(variable => this.GetVariableDetails(variable, frameId, timeout.Token))).ConfigureAwait(false);
 
             return response;
         }
@@ -86,6 +88,47 @@ namespace ObjcDap
             return TryGetAddress(variable, out _);
         }
 
+        private async Task GetVariableDetails(Variable variable, int? frameId, CancellationToken cancellationToken)
+        {
+            if (!TryGetAddress(variable, out var address))
+            {
+                return;
+            }
+
+            Stopwatch s = new Stopwatch();
+            s.Start();
+
+            // [[obj description] UTF8String], written in C:
+            //   objc_msgSend(objc_msgSend(obj, sel_registerName("description")), sel_registerName("UTF8String"))
+            var objectAddress = "(void *)0x" + address.ToString("x", CultureInfo.InvariantCulture);
+            var getVariable = $"objc_dap_get_variable({objectAddress})";
+
+            try
+            {
+                var result = await this.EvaluateAsync(getVariable, frameId, cancellationToken, language: "c").ConfigureAwait(false);
+                var text = result is null ? null : ExtractCString(result);
+
+                // lldb-dap can report a failed command as a successful response whose text holds the error,
+                // so a missing string (not a null result) is what identifies a failure.
+                if (text is null)
+                {
+                    Debug.WriteLine($"-description call produced no string. Raw result:\n{result}");
+                }
+                else if (!string.IsNullOrWhiteSpace(text))
+                {
+                    variable.Value = $"{variable.Value} {LineBreakRegex().Replace(text.Trim(), " ")}";
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Timed out or shutting down: leave the variable as lldb-dap reported it.
+            }
+
+            s.Stop();
+            Debug.WriteLine($"-description call took {s.ElapsedMilliseconds} ms");
+
+        }
+
         /// <summary>
         /// Uses <c>readMemory</c> to check whether the variable points to an Objective-C object (libobjc2, 64-bit layout)
         /// and, if so, appends the class name to the variable's value. Returns the class name, or null if it is not an object.
@@ -101,6 +144,8 @@ namespace ObjcDap
                 return null;
             }
 
+            Stopwatch s = new Stopwatch();
+            s.Start();
             try
             {
                 // The first word of an object is its isa (class) pointer.
@@ -148,6 +193,9 @@ namespace ObjcDap
                 }
 
                 variable.Value = $"{variable.Value} {name}";
+
+                s.Stop();
+                Debug.WriteLine($"class description took {s.ElapsedMilliseconds} ms");
                 return name;
             }
             catch (OperationCanceledException)
@@ -156,13 +204,14 @@ namespace ObjcDap
             }
         }
 
-        private async Task DescribeAsync(Variable variable, int? frameId, CancellationToken cancellationToken)        {
+        private async Task DescribeAsync(Variable variable, int? frameId, CancellationToken cancellationToken)
+        {
             if (!TryGetAddress(variable, out var address))
             {
                 return;
             }
 
-            Stopwatch s= new Stopwatch();
+            Stopwatch s = new Stopwatch();
             s.Start();
 
             // [[obj description] UTF8String], written in C:

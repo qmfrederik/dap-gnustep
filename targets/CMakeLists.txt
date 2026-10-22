@@ -7,9 +7,11 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Release,RelWithDebInfo>:MultiThreaded
 
 find_package(libobjc2)
 find_package(gnustep-base)
+find_package(cppdap)
+find_package(nlohmann_json)
 
-add_executable(target-NSString target-NSString.m)
-target_link_libraries(target-NSString gnustep-base::gnustep-base libobjc2::libobjc2)
+add_executable(target-NSString target-NSString.m objc_dap_variables.cpp)
+target_link_libraries(target-NSString gnustep-base::gnustep-base libobjc2::libobjc2 cppdap::cppdap nlohmann_json::nlohmann_json)
 
 if(WIN32)
     add_custom_command(TARGET target-NSString POST_BUILD

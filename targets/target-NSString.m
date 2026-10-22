@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "objc_dap.h"
+#include "objc_dap_variables.h"
 
 int main()
 {
@@ -21,6 +22,15 @@ int main()
     char* str_description = objc_dap_get_description(str);
     char* dict_description = objc_dap_get_description(dict);
     char* array_description = objc_dap_get_description(array);
+    char* str_variable = objc_dap_get_variable(str);
+    printf("%s\n", str_variable ? str_variable : "(null)");
+    free(str_variable);
+    char* array_variable = objc_dap_get_variable(array);
+    printf("%s\n", array_variable ? array_variable : "(null)");
+    free(array_variable);
+    char* array_elements = objc_dap_get_array_elements(array, 0, 0);
+    printf("%s\n", array_elements ? array_elements : "(null)");
+    free(array_elements);
     free(array_description);
     free(dict_description);
     free(str_description);
@@ -98,6 +108,78 @@ char* objc_dap_get_description(void* obj)
             if (result)
                 memcpy(result, utf8, len);
         }
+    }
+    return result;
+}
+
+typedef struct {
+    char name[32];
+    char summary[32];
+} element_text;
+
+// Fills v from obj. v->value may point into an autoreleased string, so use v within the caller's pool.
+static void describe_object(objc_dap_variable* v, element_text* text, id obj)
+{
+    v->type = class_getName(object_getClass(obj));
+    if ([obj isKindOfClass:[NSArray class]]) {
+        NSUInteger count = [(NSArray*)obj count];
+        snprintf(text->summary, sizeof text->summary, "%llu items", (unsigned long long)count);
+        v->value = text->summary;
+        if (count) {
+            v->variables_reference = (int64_t)(uintptr_t)obj;
+            v->indexed_variables = (int64_t)count;
+        }
+    } else {
+        const char* utf8 = [[obj description] UTF8String];
+        v->value = utf8 ? utf8 : "";
+    }
+}
+
+// Returns a malloc'd JSON DAP 'variables' response body describing obj, or NULL; the caller must free() it.
+// An array is reported with variablesReference set to its address; pass that to objc_dap_get_array_elements().
+char* objc_dap_get_variable(void* obj)
+{
+    if (!is_objc_object(obj))
+        return NULL;
+    char* result = NULL;
+    @autoreleasepool {
+        element_text text;
+        objc_dap_variable variable = {0};
+        snprintf(text.name, sizeof text.name, "0x%llx", (unsigned long long)(uintptr_t)obj);
+        variable.name = text.name;
+        describe_object(&variable, &text, (id)obj);
+        result = objc_dap_make_variables_response(&variable, 1);
+    }
+    return result;
+}
+
+// Returns a malloc'd JSON DAP 'variables' response body listing elements [start, start+count) of an NSArray
+// (count 0 means all), or NULL if obj is not an array; the caller must free() it.
+char* objc_dap_get_array_elements(void* obj, size_t start, size_t count)
+{
+    if (!is_objc_object(obj) || ![(id)obj isKindOfClass:[NSArray class]])
+        return NULL;
+    char* result = NULL;
+    @autoreleasepool {
+        NSArray* array = (NSArray*)obj;
+        size_t total = [array count];
+        if (start > total)
+            start = total;
+        size_t n = total - start;
+        if (count && count < n)
+            n = count;
+        objc_dap_variable* variables = calloc(n ? n : 1, sizeof *variables);
+        element_text* texts = calloc(n ? n : 1, sizeof *texts);
+        if (variables && texts) {
+            for (size_t i = 0; i < n; i++) {
+                snprintf(texts[i].name, sizeof texts[i].name, "[%llu]", (unsigned long long)(start + i));
+                variables[i].name = texts[i].name;
+                describe_object(&variables[i], &texts[i], [array objectAtIndex:start + i]);
+            }
+            result = objc_dap_make_variables_response(variables, n);
+        }
+        free(texts);
+        free(variables);
     }
     return result;
 }
