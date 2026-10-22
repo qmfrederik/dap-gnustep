@@ -19,8 +19,6 @@ namespace ObjcDap
 
         private static readonly TimeSpan DescribeTimeout = TimeSpan.FromSeconds(5);
 
-        private int symbolDiagnosticsLogged;
-
         // Uppercase-named C types that are commonly used through a pointer and are definitely not objects.
         private static readonly HashSet<string> NonObjectiveCTypes = new(StringComparer.Ordinal)
         {
@@ -58,7 +56,7 @@ namespace ObjcDap
 
             await Task.WhenAll(variables
                 .Where(IsObjectiveCObject)
-                .Select(variable => this.DescribeAsync(variable, frameId, timeout.Token))).ConfigureAwait(false);
+                .Select(variable => this.DescribeClassAsync(variable, timeout.Token))).ConfigureAwait(false);
 
             return response;
         }
@@ -88,12 +86,84 @@ namespace ObjcDap
             return TryGetAddress(variable, out _);
         }
 
-        private async Task DescribeAsync(Variable variable, int? frameId, CancellationToken cancellationToken)
+        /// <summary>
+        /// Uses <c>readMemory</c> to check whether the variable points to an Objective-C object (libobjc2, 64-bit layout)
+        /// and, if so, appends the class name to the variable's value. Returns the class name, or null if it is not an object.
+        /// </summary>
+        private async Task<string?> DescribeClassAsync(Variable variable, CancellationToken cancellationToken)
         {
+            const int PointerSize = 8;
+            const int ClassNameOffset = 2 * PointerSize; // struct objc_class { isa; super_class; name; ... }
+            const int MaxClassNameLength = 256;
+
+            if (!TryGetAddress(variable, out var objectAddress) || objectAddress % PointerSize != 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                // The first word of an object is its isa (class) pointer.
+                var isaBytes = await this.ReadMemoryAsync(objectAddress, PointerSize, cancellationToken).ConfigureAwait(false);
+                if (isaBytes is null || isaBytes.Length < PointerSize)
+                {
+                    return null;
+                }
+
+                var classAddress = BitConverter.ToUInt64(isaBytes, 0);
+                if (classAddress == 0 || classAddress % PointerSize != 0)
+                {
+                    return null;
+                }
+
+                var classBytes = await this.ReadMemoryAsync(classAddress, ClassNameOffset + PointerSize, cancellationToken).ConfigureAwait(false);
+                if (classBytes is null || classBytes.Length < ClassNameOffset + PointerSize)
+                {
+                    return null;
+                }
+
+                var nameAddress = BitConverter.ToUInt64(classBytes, ClassNameOffset);
+                if (nameAddress == 0)
+                {
+                    return null;
+                }
+
+                var nameBytes = await this.ReadMemoryAsync(nameAddress, MaxClassNameLength, cancellationToken).ConfigureAwait(false);
+                if (nameBytes is null)
+                {
+                    return null;
+                }
+
+                var length = Array.IndexOf(nameBytes, (byte)0);
+                if (length <= 0)
+                {
+                    return null;
+                }
+
+                // Class names are identifiers; anything else means this was not a class structure.
+                var name = Encoding.ASCII.GetString(nameBytes, 0, length);
+                if (!name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '$' or '.' or '<' or '>'))
+                {
+                    return null;
+                }
+
+                variable.Value = $"{variable.Value} {name}";
+                return name;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+        }
+
+        private async Task DescribeAsync(Variable variable, int? frameId, CancellationToken cancellationToken)        {
             if (!TryGetAddress(variable, out var address))
             {
                 return;
             }
+
+            Stopwatch s= new Stopwatch();
+            s.Start();
 
             // [[obj description] UTF8String], written in C:
             //   objc_msgSend(objc_msgSend(obj, sel_registerName("description")), sel_registerName("UTF8String"))
@@ -121,6 +191,9 @@ namespace ObjcDap
             {
                 // Timed out or shutting down: leave the variable as lldb-dap reported it.
             }
+
+            s.Stop();
+            Debug.WriteLine($"-description call took {s.ElapsedMilliseconds} ms");
         }
 
         private async Task LogSymbolDiagnosticsAsync(CancellationToken cancellationToken)

@@ -102,6 +102,29 @@ namespace ObjcDap
             CancellationToken cancellationToken) => ValueTask.FromResult(response);
 
         /// <summary>
+        /// Reads memory from the debuggee through the DAP readMemory request.
+        /// Returns the bytes that could be read, or null if the read failed or returned nothing.
+        /// </summary>
+        protected async Task<byte[]?> ReadMemoryAsync(ulong address, int count, CancellationToken cancellationToken)
+        {
+            var arguments = new JsonObject
+            {
+                ["memoryReference"] = "0x" + address.ToString("x", CultureInfo.InvariantCulture),
+                ["count"] = count,
+            };
+
+            var response = await this.SendProxyRequestAsync("readMemory", arguments, cancellationToken).ConfigureAwait(false);
+            if (response?["success"]?.GetValue<bool>() != true)
+            {
+                Debug.WriteLine($"readMemory failed: {response?["message"]}");
+                return null;
+            }
+
+            var data = response["body"]?["data"]?.GetValue<string>();
+            return string.IsNullOrEmpty(data) ? null : Convert.FromBase64String(data);
+        }
+
+        /// <summary>
         /// Evaluates an expression in the debuggee through the upstream adapter. Returns the result text, or null on failure.
         /// </summary>
         /// <param name="language">
